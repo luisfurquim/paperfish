@@ -1,0 +1,2 @@
+# paperfish
+RESTful Javascript client 
