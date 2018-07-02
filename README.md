@@ -17,7 +17,7 @@ Currently paperfish handles web services defined by [swagger.json](http://swagge
 basic definition. Complex/advanced swagger files may be incorrectly handled, please test before using it in production.
 WSDL support may come in the future.
 
-## Example
+## Examples
 
 Suppose the web service you want to use have a swagger specification at https://myws.url/swagger.json,
 an operation called 'search' which can be called using the HTTP method get that acceps two parameters. The
@@ -28,16 +28,10 @@ like the example below:
 
 ```Javascript
 
-   var ws;
-   var start = function() {
-      if (ws.readyState=="wait") {
-         setTimeout(start,100);
-      } else if (ws.readyState=="fail") {
-         ...
-         Handle the error
-         ...
-      } else {
-         ws.Search.get(
+   $.paperfish({
+      url: "https://myws.url/",
+      done: function() {
+         this.Search.get(
             {
                searchBy: {
                   name: "John"
@@ -60,7 +54,6 @@ like the example below:
       }
    }
 
-   ws = $.paperfish({url:"https://myws.url"});
-   setTimeout(start,100);
 
 ```
+
