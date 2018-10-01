@@ -53,12 +53,12 @@ function intMurmurHash3_32_gc(key, seed) {
 // @param {number} seed Positive integer only
 // @return {number} 32-bit positive integer hash
 
-	var h1, h1b, c1, c1b, c2, c2b, k1, i;
+   var h1, h1b, c1, c1b, c2, c2b, k1, i;
 
-	h1 = seed;
-	c1 = 0xcc9e2d51;
-	c2 = 0x1b873593;
-	i = 0;
+   h1 = seed;
+   c1 = 0xcc9e2d51;
+   c2 = 0x1b873593;
+   i = 0;
 
    k1 = key;
    k1 = ((((k1 & 0xffff) * c1) + ((((k1 >>> 16) * c1) & 0xffff) << 16))) & 0xffffffff;
@@ -70,15 +70,15 @@ function intMurmurHash3_32_gc(key, seed) {
    h1b = ((((h1 & 0xffff) * 5) + ((((h1 >>> 16) * 5) & 0xffff) << 16))) & 0xffffffff;
    h1 = (((h1b & 0xffff) + 0x6b64) + ((((h1b >>> 16) + 0xe654) & 0xffff) << 16));
 
-	h1 ^= 4;
+   h1 ^= 4;
 
-	h1 ^= h1 >>> 16;
-	h1 = (((h1 & 0xffff) * 0x85ebca6b) + ((((h1 >>> 16) * 0x85ebca6b) & 0xffff) << 16)) & 0xffffffff;
-	h1 ^= h1 >>> 13;
-	h1 = ((((h1 & 0xffff) * 0xc2b2ae35) + ((((h1 >>> 16) * 0xc2b2ae35) & 0xffff) << 16))) & 0xffffffff;
-	h1 ^= h1 >>> 16;
+   h1 ^= h1 >>> 16;
+   h1 = (((h1 & 0xffff) * 0x85ebca6b) + ((((h1 >>> 16) * 0x85ebca6b) & 0xffff) << 16)) & 0xffffffff;
+   h1 ^= h1 >>> 13;
+   h1 = ((((h1 & 0xffff) * 0xc2b2ae35) + ((((h1 >>> 16) * 0xc2b2ae35) & 0xffff) << 16))) & 0xffffffff;
+   h1 ^= h1 >>> 16;
 
-	return h1 >>> 0;
+   return h1 >>> 0;
 }
 
 
@@ -86,6 +86,8 @@ function intMurmurHash3_32_gc(key, seed) {
 (function( $ ) {
 
    var sleep;
+   var wsconn;
+
 
    if (setTimeout) {
       sleep = function (fn,tm) {
@@ -115,6 +117,35 @@ function intMurmurHash3_32_gc(key, seed) {
       return k;
    };
 
+
+
+   var wsconnect = function(url, failFunc) {
+      
+      console.log("Connecting wsocket ");
+
+      wsconn = new WebSocket(url);
+      wsconn.failFunc = failFunc;
+
+      if (!wsconn) {
+         return new Error("Websocket connection error");
+      }
+
+      wsconn.onopen = function(){
+         if (wsconn && (wsconn.readyState==1)) {
+            wsconn.active = true;
+         }
+      }
+
+      wsconn.onerror = function(ev){
+         console.log("websocket error:", ev);
+      }
+      
+      wsconn.paperfishURL = url;
+      
+      return;
+   };
+
+
    var exec = function(key,args,caller,wsocket,fn,addOrDelete) {
       args[0] = intMurmurHash3_32_gc(key,Date.now());
       if (caller.eventHandlers[args[0]] != undefined) {
@@ -130,6 +161,33 @@ function intMurmurHash3_32_gc(key, seed) {
             addOrDelete(args[0],fn);
             wsocket.send(JSON.stringify(args));
             return;
+         } else if (wsocket.fail) {
+            if ((wsconn.paperfishRetries<32) && (!wsconnect(wsconn.paperfishURL, wsocket.failFunc))) {
+               console.log("Wsocket reconnected!");
+               sleep(function() {
+                  exec(key,args,caller,wsocket,fn,addOrDelete)
+               },2);
+               setTimeout(function() {
+                  wsconn.paperfishRetries = 0;
+               },100);
+            } else {
+               console.log("Wsocket reconnection failed!");
+               wsocket.fail(key,args);
+               wsocket.fail = undefined;
+            }
+         } else if (wsocket.failFunc) {
+            if ((wsconn.paperfishRetries<32) && (!wsconnect(wsconn.paperfishURL, wsocket.failFunc))) {
+               console.log("Wsocket reconnected!");
+               sleep(function() {
+                  exec(key,args,caller,wsocket,fn,addOrDelete)
+               },2);
+               setTimeout(function() {
+                  wsconn.paperfishRetries = 0;
+               },100);
+         } else {
+               console.log("Wsocket reconnection failed!");
+               wsocket.failFunc(key,args);
+            }
          } else {
             throw new Error("Socket not ready");
          }
@@ -148,61 +206,63 @@ function intMurmurHash3_32_gc(key, seed) {
       for (fld in spec) {
          if (spec.hasOwnProperty(fld)) {
             params = [];
-            for (p=0;p<spec[fld].parameters.length;p++) {
-               if (spec[fld].parameters[p].type=="string") {
-                  params.push(function(pos) {
-                     return function(p) {
-                        if (typeof p === "string") {
-                           return;
-                        }
-                        throw new Error("Wrong paramater type " + fld + "@" + pos + ", want string, got " + (typeof p));
-                     };
-                  }(params.length));
-               } else if (spec[fld].parameters[p].type== "number") {
-                  params.push(function(pos) {
-                     return function(p) {
-                        if (typeof p === "number") {
-                           return;
-                        }
-                        throw new Error("Wrong paramater type " + fld + "@" + pos + ", want number, got " + (typeof p));
-                     };
-                  }(params.length));
-               } else if (spec[fld].parameters[p].type== "integer") {
-                  params.push(function(pos) {
-                     return function(p) {
-                        if (typeof p !== "number") {
-                           throw new Error("Wrong paramater type " + fld + "@" + pos + ", want integer, got " + (typeof p));
-                        }
-                        if (isNaN(p)) {
-                           throw new Error("Wrong paramater type " + fld + "@" + pos + ", want integer, got NaN");
-                        }
-                        if ((p|0)==p) {
-                           return;
-                        }
-                        throw new Error("Wrong paramater type " + fld + "@" + pos + ", want integer, got number");
-                     };
-                  }(params.length));
-               } else if (spec[fld].parameters[p].type== "boolean") {
-                  params.push(function(pos) {
-                     return function(p) {
-                        if (typeof p === "boolean") {
-                           return;
-                        }
-                        throw new Error("Wrong paramater type " + fld + "@" + pos + ", want boolean, got " + (typeof p));
-                     };
-                  }(params.length));
-               } else if (spec[fld].parameters[p].type== "array") {
-                  params.push(function(pos) {
-                     return function(p) {
-                        if (Array.isArray(p)) {
-                           return;
-                        }
-                        throw new Error("Wrong paramater type " + fld + "@" + pos + ", want array, got " + (typeof p));
-                     };
-                  }(params.length));
+            if (spec[fld].parameters !== undefined) {
+               for (p=0;p<spec[fld].parameters.length;p++) {
+                  if (spec[fld].parameters[p].type=="string") {
+                     params.push(function(pos,f) {
+                        return function(p) {
+                           if (typeof p === "string") {
+                              return;
+                           }
+                           throw new Error("Wrong paramater type " + f + "@" + pos + ", want string, got " + (typeof p));
+                        };
+                     }(params.length,fld));
+                  } else if (spec[fld].parameters[p].type== "number") {
+                     params.push(function(pos,f) {
+                        return function(p) {
+                           if (typeof p === "number") {
+                              return;
+                           }
+                           throw new Error("Wrong paramater type " + f + "@" + pos + ", want number, got " + (typeof p));
+                        };
+                     }(params.length,fld));
+                  } else if (spec[fld].parameters[p].type== "integer") {
+                     params.push(function(pos,f) {
+                        return function(p) {
+                           if (typeof p !== "number") {
+                              throw new Error("Wrong paramater type " + f + "@" + pos + ", want integer, got " + (typeof p));
+                           }
+                           if (isNaN(p)) {
+                              throw new Error("Wrong paramater type " + f + "@" + pos + ", want integer, got NaN");
+                           }
+                           if ((p|0)==p) {
+                              return;
+                           }
+                           throw new Error("Wrong paramater type " + f + "@" + pos + ", want integer, got number");
+                        };
+                     }(params.length,fld));
+                  } else if (spec[fld].parameters[p].type== "boolean") {
+                     params.push(function(pos,f) {
+                        return function(p) {
+                           if (typeof p === "boolean") {
+                              return;
+                           }
+                           throw new Error("Wrong paramater type " + f + "@" + pos + ", want boolean, got " + (typeof p));
+                        };
+                     }(params.length,fld));
+                  } else if (spec[fld].parameters[p].type== "array") {
+                     params.push(function(pos,f) {
+                        return function(p) {
+                           if (Array.isArray(p)) {
+                              return;
+                           }
+                           throw new Error("Wrong paramater type " + f + "@" + pos + ", want array, got " + (typeof p));
+                        };
+                     }(params.length,fld));
 
-               } else {
-                  throw new Error("Unsupported type " + fld + "@" + pos + ": " + spec[fld].parameters[p].type);
+                  } else {
+                     throw new Error("Unsupported type " + fld + "@" + pos + ": " + spec[fld].parameters[p].type);
+                  }
                }
             }
 
@@ -210,10 +270,16 @@ function intMurmurHash3_32_gc(key, seed) {
             caller[fld] = function(CheckParms, name, key) {
                return function() {
                   var i;
-                  var args = [0, name];
+                  var args = [0, name, []];
+                  var fnSuccess;
 
                   if (CheckParms.length != (arguments.length-1)) {
-                     throw new Error("Wrong parameter count: want " + (CheckParms.length+1) + ", got " + arguments.length);
+                     if ((CheckParms.length == (arguments.length-2)) && (typeof arguments[arguments.length-2] == "function") && (typeof arguments[arguments.length-1] == "function")) {
+                        wsocket.fail = arguments[arguments.length-1];
+                        fnSuccess    = arguments[arguments.length-2];
+                     } else {
+                        throw new Error("Wrong parameter count: want " + (CheckParms.length+1) + ", got " + arguments.length);
+                     }
                   }
 
                   if (typeof arguments[arguments.length-1] !== "function") {
@@ -222,10 +288,14 @@ function intMurmurHash3_32_gc(key, seed) {
 
                   for(i=0;i<CheckParms.length;i++) {
                      CheckParms[i](arguments[i]);
-                     args.push(arguments[i]);
+                     args[2].push(arguments[i]);
                   }
 
-                  exec(key,args,caller,wsocket,arguments[arguments.length-1],function(k,v) {
+                  if (!fnSuccess) {
+                     fnSuccess = arguments[arguments.length-1];
+                  }
+
+                  exec(key,args,caller,wsocket,fnSuccess,function(k,v) {
                      caller.eventHandlers[k] = v;
                   });
                };
@@ -403,7 +473,7 @@ function intMurmurHash3_32_gc(key, seed) {
                                        }
                                        if (parmobj[defines.parameters[j].name].constructor === Array) {
                                           for(k=0;k<parmobj[defines.parameters[j].name].length;k++) {
-                                             bodyData.append(defines.parameters[j].name,parmobj[defines.parameters[j].name][k]);
+                                             bodyData.append(defines.parameters[j].name + "[" + k + "]",parmobj[defines.parameters[j].name][k]);
                                           }
                                        } else {
                                           bodyData.append(defines.parameters[j].name,parmobj[defines.parameters[j].name]);
@@ -411,7 +481,10 @@ function intMurmurHash3_32_gc(key, seed) {
                                     } else if (encode=="application/x-www-form-urlencoded") {
                                        bodyData = defines.parameters[j].name + "=" + urlencode(parmobj[defines.parameters[j].name]) + "&";
                                     } else if (encode=="application/json") {
-                                       bodyData = JSON.stringify(parmobj[defines.parameters[j].name]);
+                                       if (bodyData==undefined) {
+                                          bodyData = "";
+                                       }
+                                       bodyData += JSON.stringify(parmobj[defines.parameters[j].name]) + "\n";
                                     } else if (encode=="application/octet-stream") {
                                        bodyData = parmobj[defines.parameters[j].name];
                                     } else if (encode=="application/octet-stream;base64") {
@@ -465,27 +538,17 @@ function intMurmurHash3_32_gc(key, seed) {
                               if(!("WebSocket" in window)) {
                                  throw new Error("You need a browser that supports WebSockets");
                               }
-
-                              var wsconn = new WebSocket(url);
-
-                              if (!wsconn) {
-                                 throw new Error("Websocket connection error");
-                              }
+                              
+                              wsconnect(url, failFunc);
 
                               socket = subOpCaller(wsconn,defines["x-websocketoperations"],defines["x-websocketevents"]);
 
-                              wsconn.onopen = function(){
-                                 if (wsconn && (wsconn.readyState==1)) {
-                                    wsconn.active = true;
-                                 }
-                              }
-
-                              wsconn.onclose = function(){
-                                 wsconn = undefined;
-                              }
-
                               socket.close = function(){
                                  wsconn.close();
+                              };
+
+                              socket.dump = function(){
+                                 console.log("wsock dump:",wsconn);
                               };
 
                               // Handles messages from server
