@@ -120,7 +120,7 @@ function intMurmurHash3_32_gc(key, seed) {
 
 
    var wsconnect = function(url, failFunc) {
-      
+
       console.log("Connecting wsocket ");
 
       wsconn = new WebSocket(url);
@@ -139,9 +139,9 @@ function intMurmurHash3_32_gc(key, seed) {
       wsconn.onerror = function(ev){
          console.log("websocket error:", ev);
       }
-      
+
       wsconn.paperfishURL = url;
-      
+
       return;
    };
 
@@ -355,7 +355,7 @@ function intMurmurHash3_32_gc(key, seed) {
    }
 
    $.paperfish = function(options) {
-      var url;
+      var url, xhr, pk;
       var conn = {readyState: "wait"}; // The readyState is initially set to 'wait' to make an async call to ajax
 
       if (options.done != undefined) {
@@ -388,14 +388,26 @@ function intMurmurHash3_32_gc(key, seed) {
          };
       }
 
+      if ((options.pk!==undefined) && (typeof options.pk.sign !== "function")) {
+         console.error("options.pk");
+         return {
+            readyState: "failed",
+            textStatus: "Option 'pk' must have a sign method",
+            error:      new Error("Option 'pk' must have a sign method")
+         };
+      }
+
+
       // All web service client definitions will be guided by the swagger.json specifications
       $.ajax({
+         xhr: xhr,
          method: "GET",
          url: options.url,
          dataType: "json"
       }).done(function(swagger, textStatus, jqXHR) {
          var i, path, qparms, def, defs, name, type;
-         var methods = ["get", "post", "put", "delete", "patch"];
+         var methods = ["get", "post", "put", "delete", "patch", "head"];
+         var prepare;
 
          url = options.url.substr(options.url.indexOf("://"));
          if (url.substr(url.length-1) != "/") {
@@ -408,17 +420,33 @@ function intMurmurHash3_32_gc(key, seed) {
                   // Test if this operation defined this HTTP method
                   if (swagger.paths[path][methods[i]]) {
                      if (conn[swagger.paths[path][methods[i]].operationId]==undefined) {
-                        conn[swagger.paths[path][methods[i]].operationId] = {};
+                        conn[swagger.paths[path][methods[i]].operationId] = {url:{}};
                      }
                      // Create the client for this operation ID
-                     conn[swagger.paths[path][methods[i]].operationId][methods[i]] = function(pathTemplate,method,encode,dataType,defines) {
-                        return function(parmobj, doneFunc, failFunc) {
+                     prepare = function(pathTemplate,method,encode,dataType,defines) {
+                        var j;
+                        var sortedParms, sig, err;
+
+                        if (options.pk !== undefined) {
+                           sortedParms = [];
+
+                           if (defines.parameters !== undefined) {
+                              for(j=0;j<defines.parameters.length;j++) {
+                                 sortedParms.push(defines.parameters[j].name);
+                              }
+
+                              sortedParms.sort();
+                           }
+                        }
+
+                        return function(parmobj, doneFunc, failFunc, progress) {
                            var j, k, queryparms="?", headers={}, bodyData, socket;
                            var path = pathTemplate;
-                           var req, url;
+                           var req, url, urlPath, xhr;
+                           var msgToSign;
 
                            // Check the operation ID parameter definitions
-                           if (defines.parameters) {
+                           if (defines.parameters !== undefined) {
                               for(j=0;j<defines.parameters.length;j++) {
                                  if (parmobj[defines.parameters[j].name]==undefined) {
                                     if (defines.parameters[j].required) {
@@ -507,25 +535,32 @@ function intMurmurHash3_32_gc(key, seed) {
                            }
 
                            url += "://" + swagger.host + "/"; //schemes
+                           urlPath = "/";
 
                            if (swagger.basePath.substr(0,1) == "/") {
                               url += swagger.basePath.substr(1);
+                              urlPath += swagger.basePath.substr(1);
                            } else {
                               url += swagger.basePath;
+                              urlPath += swagger.basePath;
                            }
 
                            if (url.substr(url.length-1) != "/") {
                               url += "/";
+                              urlPath += "/";
                            }
 
                            if (path.substr(0,1) == "/") {
                               url += path.substr(1);
+                              urlPath += path.substr(1);
                            } else {
                               url += path;
+                              urlPath += path;
                            }
 
                            if (queryparms != "?") {
                               url += queryparms;
+                              urlPath += queryparms;
                            }
 
                            if (dataType=="application/json") {
@@ -538,7 +573,7 @@ function intMurmurHash3_32_gc(key, seed) {
                               if(!("WebSocket" in window)) {
                                  throw new Error("You need a browser that supports WebSockets");
                               }
-                              
+
                               wsconnect(url, failFunc);
 
                               socket = subOpCaller(wsconn,defines["x-websocketoperations"],defines["x-websocketevents"]);
@@ -591,7 +626,52 @@ function intMurmurHash3_32_gc(key, seed) {
                               return socket;
 
                            } else {
+                              if (progress !== undefined) {
+                                 xhr = function() {
+                                    var xhr = new XMLHttpRequest();
+                                    if (progress.upload!==undefined) {
+                                       if (typeof(progress.upload)!="function") {
+                                          return {
+                                             readyState: "failed",
+                                             textStatus: "Option 'progress.upload', if provided, must be a function callback to be called on upload progress",
+                                             error:      new Error("Option 'progress.upload', if provided, must be a function callback to be called on upload progress")
+                                          };
+                                       }
+                                       // Upload progress
+                                       xhr.upload.addEventListener("progress", function(evt){
+                                          if (evt.lengthComputable) {
+                                             progress.upload(evt.loaded / evt.total);
+                                          }
+                                       }, false);
+                                    }
+
+                                    if (progress.download!==undefined) {
+                                       console.log("progress defined");
+                                       if (typeof(progress.download)!="function") {
+                                          return {
+                                             readyState: "failed",
+                                             textStatus: "Option 'progress.download', if provided, must be a function callback to be called on download progress",
+                                             error:      new Error("Option 'progress.download', if provided, must be a function callback to be called on download progress")
+                                          };
+                                       }
+                                       // Download progress
+                                       xhr.addEventListener("progress", function(evt){
+                                          console.log("progress 1");
+                                          if (evt.lengthComputable) {
+                                             console.log("progress 2");
+                                             if (evt.lengthComputable) {
+                                                console.log("progress 3");
+                                                progress.download(evt.loaded / evt.total);
+                                             }
+                                         }
+                                       }, false);
+                                    }
+                                    return xhr;
+                                 }
+                              }
+
                               req = {
+                                 xhr: xhr,
                                  method: method,
                                  url: url,
                                  dataType: dataType,
@@ -604,14 +684,51 @@ function intMurmurHash3_32_gc(key, seed) {
                                  req.data        = bodyData;
                               }
 
-                              $.ajax(req)
-                                 .done(doneFunc || function(){})
-                                 .fail(failFunc || function(){});
+                              if (options.pk !== undefined) {
+                                 msgToSign = method.toUpperCase() + "+" + urlPath;
+                                 console.error("url", urlPath);
+                                 if (req.data !== undefined) {
+                                    msgToSign += "\n" + req.data;
+                                 }
 
-                              return parmobj;
+                                 console.log("will sign on [" + msgToSign + "]");
+                                 [sig, err] = options.pk.sign(msgToSign);
+                                 if (err == null) {
+                                    req.headers["X-Request-Signature"] = sig;
+                                    req.headers["X-Request-Signer"] = options.pk.keyId;
+                                 } else {
+                                    console.error("Error signing paperfish request", err);
+                                 }
+                              }
+
+                              return req;
                            }
                         };
                      }(path, methods[i], swagger.paths[path][methods[i]].consumes[0], swagger.paths[path][methods[i]].produces[0], swagger.paths[path][methods[i]]);
+
+                     conn[swagger.paths[path][methods[i]].operationId][methods[i]] = function(prep) {
+                        return function(parmobj, doneFunc, failFunc, progress) {
+                           var reqSocket;
+
+                           reqSocket = prep(parmobj, doneFunc, failFunc, progress);
+
+                           if ((reqSocket.url.substr(0,4)=="wss:") || (reqSocket.url.substr(0,3)=="ws:")) {
+                              return reqSocket;
+                           }
+
+                           $.ajax(reqSocket)
+                              .done(doneFunc || function(){})
+                              .fail(failFunc || function(){});
+
+                           return parmobj;
+                        }
+                     }(prepare);
+
+                     conn[swagger.paths[path][methods[i]].operationId].url[methods[i]] = function(prep) {
+                        return function(parmobj, doneFunc, failFunc, progress) {
+                           return prep(parmobj, doneFunc, failFunc, progress).url;
+                        };
+                     }(prepare);
 
                      // Secondly we check the input parameter names to create the operation documentation
 
